@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { generateDailyReport } from '../services/reporter.js';
 import { sendTelegramReport } from '../services/notifier.js';
+import { pingHeartbeat } from '../services/heartbeat.js';
 
 let running = false;
 
@@ -20,11 +21,13 @@ export async function runDailyReport() {
     const message = await generateDailyReport();
     const sent = await sendTelegramReport(message);
     console.log(`[job] Done (${Date.now() - started} ms, sent: ${sent})`);
+    await pingHeartbeat(sent ? 'ok' : 'fail');
     return sent;
   } catch (err) {
     console.error(`[job] Failed to build report: ${err.message}`);
     // Try to notify the owner about the failure as well
     await sendTelegramReport(`⚠️ <b>Report could not be generated</b>\n<code>${String(err.message).replace(/[<>&]/g, '')}</code>`);
+    await pingHeartbeat('fail');
     return false;
   } finally {
     running = false;

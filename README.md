@@ -44,7 +44,7 @@ A Node.js background service that pulls daily sales statistics from a MySQL data
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 20+ (or Docker)
 - MySQL 8 or MariaDB 10.4+ (e.g. the one bundled with XAMPP)
 - A Telegram bot
 
@@ -97,6 +97,54 @@ npm test       # unit tests for the message formatter (no database needed)
 > **Windows PowerShell:** if you get `running scripts is disabled on this system`, run
 > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run dev`.
 
+## Deployment
+
+The service has to run on a machine that is always on, typically a small VPS (1 vCPU / 512 MB RAM is plenty). Pick one of the options below.
+
+### Option A: Docker (recommended)
+
+```bash
+git clone https://github.com/sefazcy/b2b-auto-reporter.git && cd b2b-auto-reporter
+cp .env.example .env && nano .env      # fill in DB + Telegram settings
+docker compose up -d --build
+docker compose logs -f                 # check it started
+```
+
+- `restart: unless-stopped` brings it back after crashes and server reboots.
+- Alert state is kept in the `reporter-data` volume, so rebuilding doesn't resend alerts.
+- Update to a new version: `git pull && docker compose up -d --build`.
+- **Database on the same server:** inside the container `127.0.0.1` is the container itself. Use `DB_HOST=host.docker.internal`, make MySQL listen on that interface, and create the user for the Docker network (e.g. `'reporter_ro'@'172.%'`) instead of `@'localhost'`.
+
+### Option B: pm2
+
+```bash
+npm ci --omit=dev
+npm install -g pm2
+pm2 start ecosystem.config.cjs
+pm2 save && pm2 startup                # start on boot
+pm2 logs b2b-auto-reporter
+```
+
+### Remote database
+
+If the database is on another server, don't expose MySQL to the internet. Prefer, in order:
+1. A private network / VPN between the two servers
+2. An SSH tunnel: `ssh -N -L 3307:127.0.0.1:3306 user@db-server`, then `DB_HOST=127.0.0.1`, `DB_PORT=3307`
+3. If 3306 must be open, allow only this server's IP in the firewall and require TLS
+
+Always connect with a user that only has `SELECT` rights.
+
+### Monitoring (recommended)
+
+If the service crashes, it can't tell you about it, and "no report today" looks like "no sales today". To catch that:
+
+1. Create a free check on [healthchecks.io](https://healthchecks.io) (or Uptime Kuma, Better Stack…) with a period of **15 minutes** and a grace time of ~10 minutes.
+2. Put its ping URL in `HEARTBEAT_URL`.
+3. Connect the check to Telegram or email in the monitor's settings.
+
+The service pings after every alert check and daily report, and pings `<url>/fail` when a run fails. When pings stop, the monitor alerts you.
+(If `ALERTS_ENABLED=false`, the only ping is the daily report, so set the period to 1 day.)
+
 ## Environment variables
 
 | Variable | Description |
@@ -114,6 +162,7 @@ npm test       # unit tests for the message formatter (no database needed)
 | `ALERT_BUSINESS_HOURS` | Hours when silence counts, e.g. `9-18` (end exclusive) |
 | `ALERT_BUSINESS_DAYS` | ISO weekdays, e.g. `1-5` (Mon–Fri) or `1-6` |
 | `ALERT_STATE_FILE` | Where sent alerts are remembered (default `data/alert-state.json`) |
+| `HEARTBEAT_URL` | Optional monitor URL pinged after each run (`/fail` appended on failure) |
 
 > Silence is only counted from the start of business hours, so a quiet night never triggers an alert at 09:00.
 
@@ -130,6 +179,7 @@ src/
 ├── services/notifier.js         # Telegram delivery
 ├── services/alerts.js           # alert checks and decision logic
 ├── services/alertState.js       # remembers sent alerts across restarts
+├── services/heartbeat.js        # dead man's switch ping
 ├── jobs/dailyReportJob.js       # daily report cron job
 ├── jobs/alertJob.js             # alert check cron job
 └── index.js                     # entry point

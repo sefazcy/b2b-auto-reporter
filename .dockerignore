@@ -1,0 +1,8 @@
+node_modules
+.env
+.git
+data
+test
+db
+*.log
+prompt.md

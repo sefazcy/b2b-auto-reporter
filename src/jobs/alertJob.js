@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { checkOutOfStock, checkOrderGap, parseHourRange, parseDays } from '../services/alerts.js';
 import { loadAlertState, saveAlertState } from '../services/alertState.js';
 import { sendTelegramReport } from '../services/notifier.js';
+import { pingHeartbeat } from '../services/heartbeat.js';
 
 let running = false;
 
@@ -32,6 +33,7 @@ export async function runAlertCheck() {
       }],
     ];
 
+    let healthy = true;
     for (const [name, check] of checks) {
       try {
         const { message, apply } = await check();
@@ -40,13 +42,17 @@ export async function runAlertCheck() {
           apply();
           sent++;
           console.log(`[alerts] ${name}: alert sent`);
+        } else {
+          healthy = false;
         }
       } catch (err) {
+        healthy = false;
         console.error(`[alerts] ${name} check failed: ${err.message}`);
       }
     }
 
     await saveAlertState(state);
+    await pingHeartbeat(healthy ? 'ok' : 'fail');
     return sent;
   } finally {
     running = false;

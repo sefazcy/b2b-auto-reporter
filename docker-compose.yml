@@ -1,0 +1,22 @@
+services:
+  reporter:
+    build: .
+    image: b2b-auto-reporter
+    container_name: b2b-auto-reporter
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    volumes:
+      - reporter-data:/app/data
+    # Lets DB_HOST=host.docker.internal reach a MySQL running on the host machine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  reporter-data:
