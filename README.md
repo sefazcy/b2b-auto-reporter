@@ -30,6 +30,9 @@ A Node.js background service that pulls daily sales statistics from a MySQL data
 - **Fair comparisons:** today so far is compared with yesterday and the same weekday last week *up to the same time of day*, so a report sent at 14:00 isn't measured against a full day
 - **Top 3 products** of the day by revenue
 - **Low-stock alerts** for products at or below their critical level, most urgent first
+- **Instant alerts** (checked every 15 minutes), each sent once and followed by an all-clear:
+  - 🔴 a product runs out of stock → ✅ back in stock
+  - ⏰ no orders for N hours during business hours (often means the site or payments are down) → ✅ orders resumed
 - Cancelled orders are excluded from all figures
 - Scheduled reports with `node-cron` (configurable cron expression and timezone)
 - MySQL / MariaDB connection pool via `mysql2/promise`
@@ -86,6 +89,7 @@ To use your own database, edit the queries in [src/services/reporter.js](src/ser
 ```bash
 npm start      # start the service; sends the report at REPORT_CRON_SCHEDULE
 npm run dev    # same, but also sends one test report immediately (development mode)
+npm start -- --alert-check   # also run the alert checks once right away
 npm run seed   # (re)generate sample data
 npm test       # unit tests for the message formatter (no database needed)
 ```
@@ -104,6 +108,14 @@ npm test       # unit tests for the message formatter (no database needed)
 | `REPORT_CRON_SCHEDULE` | Cron expression, e.g. `0 19 * * *` = every day at 19:00 |
 | `REPORT_TIMEZONE` | Timezone for the schedule (default `Europe/Istanbul`) |
 | `REPORT_CURRENCY` | ISO currency code for amounts (default `TRY`) |
+| `ALERTS_ENABLED` | `false` disables instant alerts (default `true`) |
+| `ALERT_CRON_SCHEDULE` | How often alerts are checked (default `*/15 * * * *`) |
+| `ALERT_NO_ORDER_HOURS` | Hours without orders before alerting (default `3`, decimals allowed) |
+| `ALERT_BUSINESS_HOURS` | Hours when silence counts, e.g. `9-18` (end exclusive) |
+| `ALERT_BUSINESS_DAYS` | ISO weekdays, e.g. `1-5` (Mon–Fri) or `1-6` |
+| `ALERT_STATE_FILE` | Where sent alerts are remembered (default `data/alert-state.json`) |
+
+> Silence is only counted from the start of business hours, so a quiet night never triggers an alert at 09:00.
 
 ## Project structure
 
@@ -116,10 +128,14 @@ src/
 ├── services/reporter.js         # SQL queries
 ├── services/reportFormatter.js  # message template (pure functions)
 ├── services/notifier.js         # Telegram delivery
-├── jobs/dailyReportJob.js       # node-cron job
+├── services/alerts.js           # alert checks and decision logic
+├── services/alertState.js       # remembers sent alerts across restarts
+├── jobs/dailyReportJob.js       # daily report cron job
+├── jobs/alertJob.js             # alert check cron job
 └── index.js                     # entry point
 test/
-└── reportFormatter.test.js      # node:test unit tests
+├── reportFormatter.test.js      # node:test unit tests
+└── alerts.test.js
 ```
 
 ## Roadmap
@@ -127,6 +143,6 @@ test/
 - [x] Comparison with yesterday / same day last week (▲▼ %)
 - [x] Top-selling products
 - [x] Low-stock alerts in the daily report
-- [ ] Instant alerts during the day (e.g. stock hits zero, no orders for hours)
+- [x] Instant alerts during the day (stock hits zero, no orders for hours)
 - [ ] Config-driven reports (define queries without code changes)
 - [ ] Additional channels (email, WhatsApp)

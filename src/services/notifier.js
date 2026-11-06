@@ -32,7 +32,7 @@ export async function sendTelegramReport(message) {
       parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
     });
-    console.log('[notifier] Report sent to Telegram.');
+    console.log('[notifier] Message sent to Telegram.');
     return true;
   } catch (err) {
     if (err instanceof TelegramApiError) {
