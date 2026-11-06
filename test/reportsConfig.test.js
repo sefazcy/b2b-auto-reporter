@@ -59,6 +59,26 @@ reports:
   assert.throws(() => parseReportsConfig(yaml), /unknown format "\|bogus"/);
 });
 
+test('last_week: previous Monday–Sunday, whatever day the report runs', () => {
+  const tz = 'Europe/Istanbul';
+  // Monday 09:00, Wednesday and Sunday night (Istanbul) all describe the week before
+  assert.equal(PERIODS.last_week.describe(new Date('2026-11-09T06:00:00Z'), tz).replace(/\s/g, ' '), 'Week of Nov 2 – 8, 2026 (Mon–Sun)');
+  assert.equal(PERIODS.last_week.describe(new Date('2026-11-11T12:00:00Z'), tz).replace(/\s/g, ' '), 'Week of Nov 2 – 8, 2026 (Mon–Sun)');
+  assert.equal(PERIODS.last_week.describe(new Date('2026-11-15T20:59:00Z'), tz).replace(/\s/g, ' '), 'Week of Nov 2 – 8, 2026 (Mon–Sun)');
+  // Across a month boundary
+  assert.equal(PERIODS.last_week.describe(new Date('2026-11-02T06:00:00Z'), tz).replace(/\s/g, ' '), 'Week of Oct 26 – Nov 1, 2026 (Mon–Sun)');
+  assert.equal(PERIODS.last_week.toDate, false);
+});
+
+test('shipped config contains valid daily and weekly reports', async () => {
+  const { readFileSync } = await import('node:fs');
+  const reports = parseReportsConfig(readFileSync('config/reports.yml', 'utf8'));
+  const weekly = reports.find((r) => r.id === 'weekly');
+  assert.deepEqual(reports.map((r) => r.id), ['daily', 'weekly']);
+  assert.equal(weekly.period, 'last_week');
+  assert.equal(weekly.schedule, '0 9 * * 1');
+});
+
 test('periods: shift and placeholder substitution', () => {
   assert.deepEqual(parseShift('7 days'), { amount: 7, unit: 'DAY' });
   assert.throws(() => parseShift('1 YEAR'));

@@ -18,17 +18,60 @@ A Node.js background service that pulls daily sales statistics from a MySQL data
 🥈 Ergonomic Office Chair — TRY 25,794.00 (6 pcs)
 🥉 Mechanical Keyboard — TRY 9,495.00 (5 pcs)
 ━━━━━━━━━━━━━━━━━━
-⚠️ Low Stock (2 products)
+⚠️ Low Stock (2)
 🔴 HP 85A Compatible Toner — OUT OF STOCK (min 10)
 🟠 Stapler — 4 left (min 5)
 ━━━━━━━━━━━━━━━━━━
 🤖 Automated report • 19:00 · compared up to the same time
 ```
 
+<details>
+<summary>Weekly summary example</summary>
+
+```
+🗓️ WEEKLY SUMMARY
+📅 Week of Oct 26 – Nov 1, 2026 (Mon–Sun)
+━━━━━━━━━━━━━━━━━━
+🛒 Orders: 166
+    ▲ +3.1% vs previous week · ▲ +2.5% vs 4 weeks earlier
+💰 Revenue: TRY 2,313,402.00
+    ▼ −6% vs previous week · ▼ −3.5% vs 4 weeks earlier
+📈 Avg. Order Value: TRY 13,936.16
+    ▼ −8.8% vs previous week · ▼ −5.8% vs 4 weeks earlier
+👥 Active Customers: 14
+    ＝ 0% vs previous week · ＝ 0% vs 4 weeks earlier
+━━━━━━━━━━━━━━━━━━
+📆 By Day
+Mon ▰▰▰▰▱▱▱▱ TRY 321,945.10 · 18 orders
+Tue ▰▰▰▰▰▰▱▱ TRY 515,011.30 · 38 orders
+Wed ▰▰▰▰▱▱▱▱ TRY 282,938.70 · 26 orders
+Thu ▰▰▰▰▰▰▰▰ TRY 641,840.70 · 40 orders
+Fri ▰▰▰▱▱▱▱▱ TRY 265,374.50 · 27 orders
+Sat ▰▰▱▱▱▱▱▱ TRY 148,197.30 · 9 orders
+Sun ▰▰▱▱▱▱▱▱ TRY 138,094.40 · 8 orders
+━━━━━━━━━━━━━━━━━━
+🏆 Top Products
+🥇 27" Monitor — TRY 887,889.00 (111 pcs)
+🥈 Office Desk 140cm — TRY 549,000.00 (100 pcs)
+🥉 Ergonomic Office Chair — TRY 249,342.00 (58 pcs)
+4. Mechanical Keyboard — TRY 134,829.00 (71 pcs)
+5. USB-C Hub 7-in-1 — TRY 89,001.00 (99 pcs)
+━━━━━━━━━━━━━━━━━━
+🤝 Top Customers
+🥇 Atlas Logistics Inc. — TRY 257,217.80 (14 orders)
+🥈 North Software Ltd. — TRY 230,794.50 (17 orders)
+🥉 Rock Education Group — TRY 218,494.60 (15 orders)
+━━━━━━━━━━━━━━━━━━
+🤖 Automated report • 09:00
+```
+
+</details>
+
 ## Features
 
 - **Fair comparisons:** today so far is compared with yesterday and the same weekday last week *up to the same time of day*, so a report sent at 14:00 isn't measured against a full day
 - **Top 3 products** of the day by revenue
+- **Weekly summary** every Monday: week-over-week comparison, revenue by day, top products and top customers
 - **Low-stock alerts** for products at or below their critical level, most urgent first
 - **Instant alerts** (checked every 15 minutes), each sent once and followed by an all-clear:
   - 🔴 a product runs out of stock → ✅ back in stock
@@ -87,7 +130,7 @@ reports:
     title: DAILY SALES REPORT
     emoji: "📊"
     schedule: "0 19 * * *"
-    period: today                      # today | yesterday
+    period: today                      # today | yesterday | last_week
     compare:                           # same queries, shifted back in time
       - { shift: 1 DAY, label: yesterday }
       - { shift: 7 DAY, label: "last {weekday}" }
@@ -114,6 +157,8 @@ reports:
 - Item templates use `{column}` or `{column|format}`; formats are `number`, `currency`, `percent`, `text`. Values are HTML-escaped.
 - List options: `ranked`, `bullet` (line prefix, `""` for none), `totalColumn` (adds "…and N more"), `emptyText` (otherwise empty lists are hidden).
 - Put conditional logic in SQL, e.g. `IF(stock <= 0, '🔴', '🟠') AS icon`.
+- `last_week` is the previous Monday–Sunday; comparisons for it typically use `1 WEEK` / `4 WEEK`.
+- Day and month names from `DATE_FORMAT` follow MySQL's `lc_time_names` (default `en_US`).
 - Set `enabled: false` to turn a report off. Try a single report with `npm start -- --test-run=<id>`.
 - The config is validated on startup; mistakes are reported with their exact location, e.g.
   `reports[0] (daily).sections[0].metrics[1]: unknown format "money"`.
@@ -244,5 +289,6 @@ test/                            # node:test unit tests
 - [x] Low-stock alerts in the daily report
 - [x] Instant alerts during the day (stock hits zero, no orders for hours)
 - [x] Config-driven reports (define queries without code changes)
-- [ ] Weekly summary report
+- [x] Weekly summary report
+- [ ] Monthly summary report
 - [ ] Additional channels (email, WhatsApp)

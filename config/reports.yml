@@ -4,7 +4,7 @@
 #   id         unique name (used with --test-run=<id>)
 #   title      message heading; emoji is optional
 #   schedule   cron expression (minute hour day month weekday), timezone = REPORT_TIMEZONE
-#   period     today | yesterday
+#   period     today | yesterday | last_week (previous Monday–Sunday)
 #   compare    optional: the same queries are re-run for the period shifted back in time
 #              shift: "N DAY" | "N WEEK" | "N MONTH"; label may use {weekday}
 #   enabled    set to false to turn a report off
@@ -77,3 +77,76 @@ reports:
           ORDER BY stock / NULLIF(critical_stock, 0), stock
           LIMIT 5
         item: "{icon} {name} — {status} (min {critical_stock|number})"
+
+  - id: weekly
+    title: WEEKLY SUMMARY
+    emoji: "🗓️"
+    schedule: "0 9 * * 1"   # Mondays at 09:00
+    period: last_week
+    compare:
+      - { shift: 1 WEEK, label: previous week }
+      - { shift: 4 WEEK, label: 4 weeks earlier }
+    sections:
+      - type: metrics
+        query: |
+          SELECT
+            COUNT(*)                                     AS orders,
+            IFNULL(SUM(amount), 0)                       AS revenue,
+            IFNULL(SUM(amount) / NULLIF(COUNT(*), 0), 0) AS avg_order,
+            COUNT(DISTINCT customer)                     AS customers
+          FROM orders
+          WHERE created_at >= {{from}} AND created_at < {{to}}
+            AND status <> 'cancelled'
+        metrics:
+          - { column: orders,    label: Orders,           emoji: "🛒", format: number }
+          - { column: revenue,   label: Revenue,          emoji: "💰", format: currency }
+          - { column: avg_order, label: Avg. Order Value, emoji: "📈", format: currency }
+          - { column: customers, label: Active Customers, emoji: "👥", format: number }
+
+      - type: list
+        title: By Day
+        emoji: "📆"
+        bullet: ""
+        query: |
+          SELECT
+            DATE_FORMAT(MIN(created_at), '%a') AS day,
+            COUNT(*)                           AS orders,
+            SUM(amount)                        AS revenue,
+            -- text bar scaled to the best day of the week
+            RPAD(REPEAT('▰', ROUND(8 * SUM(amount) / MAX(SUM(amount)) OVER ())), 8, '▱') AS bar
+          FROM orders
+          WHERE created_at >= {{from}} AND created_at < {{to}}
+            AND status <> 'cancelled'
+          GROUP BY DATE(created_at)
+          ORDER BY DATE(created_at)
+        item: "<code>{day} {bar}</code> {revenue|currency} · {orders|number} orders"
+
+      - type: list
+        title: Top Products
+        emoji: "🏆"
+        ranked: true
+        query: |
+          SELECT p.name, SUM(oi.quantity) AS quantity, SUM(oi.quantity * oi.unit_price) AS revenue
+          FROM order_items oi
+          JOIN orders   o ON o.id = oi.order_id
+          JOIN products p ON p.id = oi.product_id
+          WHERE o.created_at >= {{from}} AND o.created_at < {{to}}
+            AND o.status <> 'cancelled'
+          GROUP BY p.id, p.name
+          ORDER BY revenue DESC
+          LIMIT 5
+        item: "{name} — {revenue|currency} ({quantity|number} pcs)"
+
+      - type: list
+        title: Top Customers
+        emoji: "🤝"
+        ranked: true
+        query: |
+          SELECT customer, COUNT(*) AS orders, SUM(amount) AS revenue
+          FROM orders
+          WHERE created_at >= {{from}} AND created_at < {{to}}
+            AND status <> 'cancelled'
+          GROUP BY customer
+          ORDER BY revenue DESC
+          LIMIT 3
+        item: "{customer} — {revenue|currency} ({orders|number} orders)"

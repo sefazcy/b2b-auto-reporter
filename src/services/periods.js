@@ -8,6 +8,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const longDate = (date, timeZone) =>
   date.toLocaleDateString(LOCALE, { timeZone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
+const ISO_DAY = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+
+/** Monday and Sunday of the week before `now`, in the given timezone. */
+function lastWeekBounds(now, timeZone) {
+  const isoDay = ISO_DAY[new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(now)];
+  const monday = new Date(now.getTime() - (isoDay - 1 + 7) * DAY_MS);
+  return { monday, sunday: new Date(monday.getTime() + 6 * DAY_MS) };
+}
+
 // refDate: a date inside the period (used for labels like "vs last Friday")
 export const PERIODS = {
   today: {
@@ -23,6 +32,19 @@ export const PERIODS = {
     toDate: false,
     refDate: (now) => new Date(now.getTime() - DAY_MS),
     describe: (now, tz) => longDate(new Date(now.getTime() - DAY_MS), tz),
+  },
+  // Previous ISO week, Monday 00:00 → Monday 00:00 (WEEKDAY(): Monday = 0)
+  last_week: {
+    from: 'CURDATE() - INTERVAL (WEEKDAY(CURDATE()) + 7) DAY',
+    to: 'CURDATE() - INTERVAL WEEKDAY(CURDATE()) DAY',
+    toDate: false,
+    refDate: (now) => new Date(now.getTime() - 7 * DAY_MS),
+    describe: (now, tz) => {
+      const { monday, sunday } = lastWeekBounds(now, tz);
+      const range = new Intl.DateTimeFormat(LOCALE, { timeZone: tz, day: 'numeric', month: 'short', year: 'numeric' })
+        .formatRange(monday, sunday);
+      return `Week of ${range} (Mon–Sun)`;
+    },
   },
 };
 
