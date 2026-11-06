@@ -2,6 +2,16 @@ import { Api, TelegramApiError } from 'node-telegram-bot-api';
 
 let api = null;
 
+const TELEGRAM_MAX_LENGTH = 4096;
+
+/** Telegram rejects longer messages; cut at a line break and close with a note. */
+export function truncateMessage(message, max = TELEGRAM_MAX_LENGTH) {
+  if (message.length <= max) return message;
+  const note = '\n<i>…message truncated</i>';
+  const cut = message.lastIndexOf('\n', max - note.length);
+  return message.slice(0, cut > 0 ? cut : max - note.length) + note;
+}
+
 function getApi() {
   if (!api) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -28,7 +38,7 @@ export async function sendTelegramReport(message) {
     }
     await getApi().sendMessage({
       chat_id: chatId,
-      text: message,
+      text: truncateMessage(message),
       parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
     });

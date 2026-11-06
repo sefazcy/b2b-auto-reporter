@@ -1,0 +1,79 @@
+# Report definitions — edit this file to change what is reported, without touching code.
+#
+# Each report:
+#   id         unique name (used with --test-run=<id>)
+#   title      message heading; emoji is optional
+#   schedule   cron expression (minute hour day month weekday), timezone = REPORT_TIMEZONE
+#   period     today | yesterday
+#   compare    optional: the same queries are re-run for the period shifted back in time
+#              shift: "N DAY" | "N WEEK" | "N MONTH"; label may use {weekday}
+#   enabled    set to false to turn a report off
+#
+# Sections:
+#   metrics    query returns ONE row; each metric shows a column (+ comparisons)
+#   list       query returns rows; "item" is a template: {column} or {column|format}
+#              formats: number, currency, percent, text
+#              ranked: true → 🥇🥈🥉 · bullet: line prefix (default "•", "" for none)
+#              totalColumn: column with the total row count → "…and N more"
+#              emptyText: shown when there are no rows (otherwise the section is hidden)
+#
+# Queries can use {{from}} and {{to}}: the period's start (inclusive) and end (exclusive).
+# They are filled in by the app as SQL date expressions — always filter with
+#   created_at >= {{from}} AND created_at < {{to}}
+
+reports:
+  - id: daily
+    title: DAILY SALES REPORT
+    emoji: "📊"
+    schedule: "0 19 * * *"
+    period: today
+    compare:
+      - { shift: 1 DAY, label: yesterday }
+      - { shift: 7 DAY, label: "last {weekday}" }
+    sections:
+      - type: metrics
+        query: |
+          SELECT
+            COUNT(*)                                     AS orders,
+            IFNULL(SUM(amount), 0)                       AS revenue,
+            IFNULL(SUM(amount) / NULLIF(COUNT(*), 0), 0) AS avg_order
+          FROM orders
+          WHERE created_at >= {{from}} AND created_at < {{to}}
+            AND status <> 'cancelled'
+        metrics:
+          - { column: orders,    label: Orders,           emoji: "🛒", format: number }
+          - { column: revenue,   label: Revenue,          emoji: "💰", format: currency }
+          - { column: avg_order, label: Avg. Order Value, emoji: "📈", format: currency }
+
+      - type: list
+        title: Top Products
+        emoji: "🏆"
+        ranked: true
+        query: |
+          SELECT p.name, SUM(oi.quantity) AS quantity, SUM(oi.quantity * oi.unit_price) AS revenue
+          FROM order_items oi
+          JOIN orders   o ON o.id = oi.order_id
+          JOIN products p ON p.id = oi.product_id
+          WHERE o.created_at >= {{from}} AND o.created_at < {{to}}
+            AND o.status <> 'cancelled'
+          GROUP BY p.id, p.name
+          ORDER BY revenue DESC
+          LIMIT 3
+        item: "{name} — {revenue|currency} ({quantity|number} pcs)"
+
+      - type: list
+        title: Low Stock
+        emoji: "⚠️"
+        totalColumn: total
+        bullet: ""   # the icon column is the bullet
+        query: |
+          SELECT
+            name, critical_stock,
+            IF(stock <= 0, '🔴', '🟠')                              AS icon,
+            IF(stock <= 0, 'OUT OF STOCK', CONCAT(stock, ' left')) AS status,
+            COUNT(*) OVER ()                                        AS total
+          FROM products
+          WHERE stock <= critical_stock
+          ORDER BY stock / NULLIF(critical_stock, 0), stock
+          LIMIT 5
+        item: "{icon} {name} — {status} (min {critical_stock|number})"

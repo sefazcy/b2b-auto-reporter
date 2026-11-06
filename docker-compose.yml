@@ -9,6 +9,8 @@ services:
       NODE_ENV: production
     volumes:
       - reporter-data:/app/data
+      # Edit config/reports.yml on the host, then `docker compose restart`
+      - ./config:/app/config:ro
     # Lets DB_HOST=host.docker.internal reach a MySQL running on the host machine
     extra_hosts:
       - "host.docker.internal:host-gateway"

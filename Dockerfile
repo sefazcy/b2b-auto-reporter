@@ -7,6 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src ./src
+COPY config ./config
 
 # Alert state lives in /app/data (mount a volume to keep it across rebuilds)
 RUN mkdir -p data && chown -R node:node data

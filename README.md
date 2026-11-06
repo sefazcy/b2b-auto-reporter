@@ -34,7 +34,8 @@ A Node.js background service that pulls daily sales statistics from a MySQL data
   - 🔴 a product runs out of stock → ✅ back in stock
   - ⏰ no orders for N hours during business hours (often means the site or payments are down) → ✅ orders resumed
 - Cancelled orders are excluded from all figures
-- Scheduled reports with `node-cron` (configurable cron expression and timezone)
+- **Config-driven reports:** queries, message templates and schedules live in a YAML file, so the service adapts to any schema without code changes
+- Scheduled reports with `node-cron` (each report has its own cron expression)
 - MySQL / MariaDB connection pool via `mysql2/promise`
 - Telegram delivery with HTML formatting
 - Connects with a **read-only** database user
@@ -74,7 +75,50 @@ npm run seed
 
 `npm run seed` generates 60 days of orders (busier on weekdays) and a few products below their critical stock level. It connects as `root` with an empty password by default; override with `SEED_DB_USER` / `SEED_DB_PASSWORD`.
 
-To use your own database, edit the queries in [src/services/reporter.js](src/services/reporter.js). They expect the tables in [db/schema.sql](db/schema.sql):
+> `CURDATE()` uses the MySQL server's timezone. If the server runs in UTC while you are in Türkiye, "today" will be shifted by 3 hours.
+
+## Configuring reports
+
+Reports are defined in [config/reports.yml](config/reports.yml), so they can be adapted to any database schema **without changing code**. Each report has its own schedule, period, comparisons and sections:
+
+```yaml
+reports:
+  - id: daily
+    title: DAILY SALES REPORT
+    emoji: "📊"
+    schedule: "0 19 * * *"
+    period: today                      # today | yesterday
+    compare:                           # same queries, shifted back in time
+      - { shift: 1 DAY, label: yesterday }
+      - { shift: 7 DAY, label: "last {weekday}" }
+    sections:
+      - type: metrics                  # one row → numbers with ▲▼ comparisons
+        query: |
+          SELECT COUNT(*) AS orders, IFNULL(SUM(amount), 0) AS revenue
+          FROM orders
+          WHERE created_at >= {{from}} AND created_at < {{to}}
+        metrics:
+          - { column: orders,  label: Orders,  emoji: "🛒", format: number }
+          - { column: revenue, label: Revenue, emoji: "💰", format: currency }
+
+      - type: list                     # many rows → one line per row
+        title: Top Products
+        emoji: "🏆"
+        ranked: true                   # 🥇🥈🥉
+        query: SELECT name, revenue FROM ... WHERE created_at >= {{from}} AND created_at < {{to}} LIMIT 3
+        item: "{name} — {revenue|currency}"
+```
+
+- `{{from}}` / `{{to}}` are replaced with the period's start (inclusive) and end (exclusive) as SQL expressions. For comparisons the same query is run again with the range shifted back (`N DAY`, `N WEEK`, `N MONTH`).
+- For `today`, comparisons are cut at the same time of day.
+- Item templates use `{column}` or `{column|format}`; formats are `number`, `currency`, `percent`, `text`. Values are HTML-escaped.
+- List options: `ranked`, `bullet` (line prefix, `""` for none), `totalColumn` (adds "…and N more"), `emptyText` (otherwise empty lists are hidden).
+- Put conditional logic in SQL, e.g. `IF(stock <= 0, '🔴', '🟠') AS icon`.
+- Set `enabled: false` to turn a report off. Try a single report with `npm start -- --test-run=<id>`.
+- The config is validated on startup; mistakes are reported with their exact location, e.g.
+  `reports[0] (daily).sections[0].metrics[1]: unknown format "money"`.
+
+The shipped config targets the sample schema in [db/schema.sql](db/schema.sql):
 
 | Table | Columns used |
 |---|---|
@@ -82,16 +126,17 @@ To use your own database, edit the queries in [src/services/reporter.js](src/ser
 | `order_items` | `order_id`, `product_id`, `quantity`, `unit_price` |
 | `products` | `id`, `name`, `stock`, `critical_stock` |
 
-> `CURDATE()` uses the MySQL server's timezone. If the server runs in UTC while you are in Türkiye, "today" will be shifted by 3 hours.
+> Instant alerts (below) still use these tables directly; see [src/services/alerts.js](src/services/alerts.js).
 
 ## Usage
 
 ```bash
-npm start      # start the service; sends the report at REPORT_CRON_SCHEDULE
-npm run dev    # same, but also sends one test report immediately (development mode)
-npm start -- --alert-check   # also run the alert checks once right away
+npm start      # start the service; reports run on their schedules
+npm run dev    # same, but also sends every enabled report immediately (development mode)
+npm start -- --test-run=daily   # send only the given report(s) now (comma-separated)
+npm start -- --alert-check      # also run the alert checks once right away
 npm run seed   # (re)generate sample data
-npm test       # unit tests for the message formatter (no database needed)
+npm test       # unit tests (no database needed)
 ```
 
 > **Windows PowerShell:** if you get `running scripts is disabled on this system`, run
@@ -113,6 +158,7 @@ docker compose logs -f                 # check it started
 - `restart: unless-stopped` brings it back after crashes and server reboots.
 - Alert state is kept in the `reporter-data` volume, so rebuilding doesn't resend alerts.
 - Update to a new version: `git pull && docker compose up -d --build`.
+- `config/` is mounted read-only, so after editing `config/reports.yml` a `docker compose restart` is enough.
 - **Database on the same server:** inside the container `127.0.0.1` is the container itself. Use `DB_HOST=host.docker.internal`, make MySQL listen on that interface, and create the user for the Docker network (e.g. `'reporter_ro'@'172.%'`) instead of `@'localhost'`.
 
 ### Option B: pm2
@@ -142,7 +188,7 @@ If the service crashes, it can't tell you about it, and "no report today" looks 
 2. Put its ping URL in `HEARTBEAT_URL`.
 3. Connect the check to Telegram or email in the monitor's settings.
 
-The service pings after every alert check and daily report, and pings `<url>/fail` when a run fails. When pings stop, the monitor alerts you.
+The service pings after every alert check and report, and pings `<url>/fail` when a run fails. When pings stop, the monitor alerts you.
 (If `ALERTS_ENABLED=false`, the only ping is the daily report, so set the period to 1 day.)
 
 ## Environment variables
@@ -153,7 +199,8 @@ The service pings after every alert check and daily report, and pings `<url>/fai
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | MySQL connection (use a read-only user) |
 | `TELEGRAM_BOT_TOKEN` | Token from BotFather |
 | `TELEGRAM_CHAT_ID` | Chat or group ID that receives the report |
-| `REPORT_CRON_SCHEDULE` | Cron expression, e.g. `0 19 * * *` = every day at 19:00 |
+| `REPORTS_CONFIG` | Path to the reports file (default `config/reports.yml`) |
+| `REPORT_CRON_SCHEDULE` | Fallback schedule for reports without `schedule` (default `0 19 * * *`) |
 | `REPORT_TIMEZONE` | Timezone for the schedule (default `Europe/Istanbul`) |
 | `REPORT_CURRENCY` | ISO currency code for amounts (default `TRY`) |
 | `ALERTS_ENABLED` | `false` disables instant alerts (default `true`) |
@@ -169,23 +216,25 @@ The service pings after every alert check and daily report, and pings `<url>/fai
 ## Project structure
 
 ```
+config/
+└── reports.yml                  # report definitions (queries, templates, schedules)
 db/
-├── schema.sql              # sample tables: products, orders, order_items
-└── seed.js                 # sample data generator
+├── schema.sql                   # sample tables: products, orders, order_items
+└── seed.js                      # sample data generator
 src/
-├── config/db.js            # MySQL pool + connection check
-├── services/reporter.js         # SQL queries
-├── services/reportFormatter.js  # message template (pure functions)
+├── config/db.js                 # MySQL pool + connection check
+├── config/reports.js            # loads and validates reports.yml
+├── services/periods.js          # periods, {{from}}/{{to}}, comparison shifts
+├── services/reportEngine.js     # runs a report's queries
+├── services/reportFormatter.js  # renders the message (pure functions)
 ├── services/notifier.js         # Telegram delivery
 ├── services/alerts.js           # alert checks and decision logic
 ├── services/alertState.js       # remembers sent alerts across restarts
 ├── services/heartbeat.js        # dead man's switch ping
-├── jobs/dailyReportJob.js       # daily report cron job
+├── jobs/reportJob.js            # one cron job per report
 ├── jobs/alertJob.js             # alert check cron job
 └── index.js                     # entry point
-test/
-├── reportFormatter.test.js      # node:test unit tests
-└── alerts.test.js
+test/                            # node:test unit tests
 ```
 
 ## Roadmap
@@ -194,5 +243,6 @@ test/
 - [x] Top-selling products
 - [x] Low-stock alerts in the daily report
 - [x] Instant alerts during the day (stock hits zero, no orders for hours)
-- [ ] Config-driven reports (define queries without code changes)
+- [x] Config-driven reports (define queries without code changes)
+- [ ] Weekly summary report
 - [ ] Additional channels (email, WhatsApp)
