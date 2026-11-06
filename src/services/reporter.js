@@ -1,65 +1,79 @@
 import pool from '../config/db.js';
+import { formatDailyReport } from './reportFormatter.js';
 
-// Today's orders. Uses a date range instead of DATE(created_at)
-// so the index on created_at can be used.
-const DAILY_SUMMARY_SQL = `
+const TOP_PRODUCTS_LIMIT = 3;
+const LOW_STOCK_LIMIT = 5;
+
+// Today so far vs. yesterday and the same weekday last week, each up to the
+// same time of day. Comparing a partial day with a full day would be misleading.
+// Range conditions (instead of DATE(created_at)) let MySQL use the created_at index.
+const PERIOD_SUMMARY_SQL = `
   SELECT
-    COUNT(id)               AS total_orders,
-    IFNULL(SUM(amount), 0)  AS total_revenue
+    SUM(created_at >= CURDATE())                                                AS today_orders,
+    SUM(IF(created_at >= CURDATE(), amount, 0))                                 AS today_revenue,
+    SUM(created_at >= CURDATE() - INTERVAL 1 DAY AND created_at <= NOW() - INTERVAL 1 DAY)               AS yesterday_orders,
+    SUM(IF(created_at >= CURDATE() - INTERVAL 1 DAY AND created_at <= NOW() - INTERVAL 1 DAY, amount, 0)) AS yesterday_revenue,
+    SUM(created_at >= CURDATE() - INTERVAL 7 DAY AND created_at <= NOW() - INTERVAL 7 DAY)               AS last_week_orders,
+    SUM(IF(created_at >= CURDATE() - INTERVAL 7 DAY AND created_at <= NOW() - INTERVAL 7 DAY, amount, 0)) AS last_week_revenue
   FROM orders
-  WHERE created_at >= CURDATE()
-    AND created_at <  CURDATE() + INTERVAL 1 DAY
+  WHERE created_at >= CURDATE() - INTERVAL 7 DAY
+    AND created_at <= NOW()
     AND status <> 'cancelled'
 `;
 
-const LOCALE = 'en-US';
+const TOP_PRODUCTS_SQL = `
+  SELECT p.name, SUM(oi.quantity) AS quantity, SUM(oi.quantity * oi.unit_price) AS revenue
+  FROM order_items oi
+  JOIN orders   o ON o.id = oi.order_id
+  JOIN products p ON p.id = oi.product_id
+  WHERE o.created_at >= CURDATE()
+    AND o.status <> 'cancelled'
+  GROUP BY p.id, p.name
+  ORDER BY revenue DESC
+  LIMIT ?
+`;
 
-function escapeHtml(text) {
-  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// Most urgent first: out of stock, then lowest stock relative to its critical level
+const LOW_STOCK_SQL = `
+  SELECT name, stock, critical_stock, COUNT(*) OVER () AS total
+  FROM products
+  WHERE stock <= critical_stock
+  ORDER BY stock / NULLIF(critical_stock, 0) ASC, stock ASC
+  LIMIT ?
+`;
+
+const num = (v) => Number(v) || 0;
 
 /**
- * Turns raw numbers into a Telegram (HTML) message.
- * @param {{ totalOrders: number, totalRevenue: number, date: Date }} data
+ * Fetches all daily report data from the database.
+ * @returns {Promise<import('./reportFormatter.js').DailyReportData>}
  */
-export function formatDailyReport({ totalOrders, totalRevenue, date }) {
-  const tz = process.env.REPORT_TIMEZONE || 'Europe/Istanbul';
-  const currency = new Intl.NumberFormat(LOCALE, {
-    style: 'currency',
-    currency: process.env.REPORT_CURRENCY || 'TRY',
-  });
-  const integer = new Intl.NumberFormat(LOCALE);
+export async function fetchDailyReportData() {
+  const [[[summary]], [topRows], [stockRows]] = await Promise.all([
+    pool.query(PERIOD_SUMMARY_SQL),
+    pool.query(TOP_PRODUCTS_SQL, [TOP_PRODUCTS_LIMIT]),
+    pool.query(LOW_STOCK_SQL, [LOW_STOCK_LIMIT]),
+  ]);
 
-  const day = date.toLocaleDateString(LOCALE, {
-    timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
-  const time = date.toLocaleTimeString(LOCALE, { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-  const average = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-  const line = '━━━━━━━━━━━━━━━━━━';
-
-  return [
-    '📊 <b>DAILY SALES REPORT</b>',
-    `📅 ${escapeHtml(day)}`,
-    line,
-    `🛒 <b>Total Orders:</b> ${integer.format(totalOrders)}`,
-    `💰 <b>Total Revenue:</b> ${currency.format(totalRevenue)}`,
-    `📈 <b>Avg. Order Value:</b> ${currency.format(average)}`,
-    line,
-    `<i>🤖 Automated report • ${escapeHtml(time)}</i>`,
-  ].join('\n');
+  return {
+    date: new Date(),
+    today: { orders: num(summary?.today_orders), revenue: num(summary?.today_revenue) },
+    yesterday: { orders: num(summary?.yesterday_orders), revenue: num(summary?.yesterday_revenue) },
+    lastWeek: { orders: num(summary?.last_week_orders), revenue: num(summary?.last_week_revenue) },
+    topProducts: topRows.map((r) => ({ name: r.name, quantity: num(r.quantity), revenue: num(r.revenue) })),
+    lowStock: stockRows.map((r) => ({ name: r.name, stock: num(r.stock), criticalStock: num(r.critical_stock) })),
+    lowStockTotal: num(stockRows[0]?.total),
+  };
 }
 
 /**
- * Fetches today's summary from the database and returns the formatted message.
+ * Builds the formatted daily report message.
  * @returns {Promise<string>}
  */
 export async function generateDailyReport() {
-  const [rows] = await pool.query(DAILY_SUMMARY_SQL);
-  const row = rows[0] ?? {};
-
-  return formatDailyReport({
-    totalOrders: Number(row.total_orders) || 0,
-    totalRevenue: Number(row.total_revenue) || 0,
-    date: new Date(),
+  const data = await fetchDailyReportData();
+  return formatDailyReport(data, {
+    timezone: process.env.REPORT_TIMEZONE || 'Europe/Istanbul',
+    currency: process.env.REPORT_CURRENCY || 'TRY',
   });
 }

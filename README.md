@@ -1,20 +1,36 @@
 # b2b-auto-reporter
 
-A Node.js background service that pulls daily sales statistics (order count, revenue, average order value) from a MySQL database and sends a formatted report to Telegram on a schedule.
+A Node.js background service that pulls daily sales statistics from a MySQL database and sends a formatted report to Telegram on a schedule: how today compares to yesterday and last week, what sold best, and what is running out of stock.
 
 ```
 📊 DAILY SALES REPORT
-📅 Saturday, November 7, 2026
+📅 Friday, November 6, 2026
 ━━━━━━━━━━━━━━━━━━
-🛒 Total Orders: 42
-💰 Total Revenue: TRY 128,450.50
-📈 Avg. Order Value: TRY 3,058.35
+🛒 Orders: 32
+    ▲ +14% vs yesterday · ▼ −3% vs last Friday
+💰 Revenue: TRY 128,450.50
+    ▲ +9% vs yesterday · ▲ +21% vs last Friday
+📈 Avg. Order Value: TRY 4,014.08
+    ▼ −4.4% vs yesterday · ▲ +25% vs last Friday
 ━━━━━━━━━━━━━━━━━━
-🤖 Automated report • 19:00
+🏆 Top Products
+🥇 27" Monitor — TRY 71,991.00 (9 pcs)
+🥈 Ergonomic Office Chair — TRY 25,794.00 (6 pcs)
+🥉 Mechanical Keyboard — TRY 9,495.00 (5 pcs)
+━━━━━━━━━━━━━━━━━━
+⚠️ Low Stock (2 products)
+🔴 HP 85A Compatible Toner — OUT OF STOCK (min 10)
+🟠 Stapler — 4 left (min 5)
+━━━━━━━━━━━━━━━━━━
+🤖 Automated report • 19:00 · compared up to the same time
 ```
 
 ## Features
 
+- **Fair comparisons:** today so far is compared with yesterday and the same weekday last week *up to the same time of day*, so a report sent at 14:00 isn't measured against a full day
+- **Top 3 products** of the day by revenue
+- **Low-stock alerts** for products at or below their critical level, most urgent first
+- Cancelled orders are excluded from all figures
 - Scheduled reports with `node-cron` (configurable cron expression and timezone)
 - MySQL / MariaDB connection pool via `mysql2/promise`
 - Telegram delivery with HTML formatting
@@ -55,7 +71,13 @@ npm run seed
 
 `npm run seed` generates 60 days of orders (busier on weekdays) and a few products below their critical stock level. It connects as `root` with an empty password by default; override with `SEED_DB_USER` / `SEED_DB_PASSWORD`.
 
-To use your own database, edit the query in [src/services/reporter.js](src/services/reporter.js). The default query expects an `orders` table with `id`, `amount`, `status` and `created_at` columns.
+To use your own database, edit the queries in [src/services/reporter.js](src/services/reporter.js). They expect the tables in [db/schema.sql](db/schema.sql):
+
+| Table | Columns used |
+|---|---|
+| `orders` | `id`, `amount`, `status` (`cancelled` is excluded), `created_at` |
+| `order_items` | `order_id`, `product_id`, `quantity`, `unit_price` |
+| `products` | `id`, `name`, `stock`, `critical_stock` |
 
 > `CURDATE()` uses the MySQL server's timezone. If the server runs in UTC while you are in Türkiye, "today" will be shifted by 3 hours.
 
@@ -65,6 +87,7 @@ To use your own database, edit the query in [src/services/reporter.js](src/servi
 npm start      # start the service; sends the report at REPORT_CRON_SCHEDULE
 npm run dev    # same, but also sends one test report immediately (development mode)
 npm run seed   # (re)generate sample data
+npm test       # unit tests for the message formatter (no database needed)
 ```
 
 > **Windows PowerShell:** if you get `running scripts is disabled on this system`, run
@@ -90,16 +113,20 @@ db/
 └── seed.js                 # sample data generator
 src/
 ├── config/db.js            # MySQL pool + connection check
-├── services/reporter.js    # SQL query and message template
-├── services/notifier.js    # Telegram delivery
-├── jobs/dailyReportJob.js  # node-cron job
-└── index.js                # entry point
+├── services/reporter.js         # SQL queries
+├── services/reportFormatter.js  # message template (pure functions)
+├── services/notifier.js         # Telegram delivery
+├── jobs/dailyReportJob.js       # node-cron job
+└── index.js                     # entry point
+test/
+└── reportFormatter.test.js      # node:test unit tests
 ```
 
 ## Roadmap
 
-- [ ] Comparison with yesterday / same day last week (▲▼ %)
-- [ ] Top-selling products
-- [ ] Low-stock alerts
+- [x] Comparison with yesterday / same day last week (▲▼ %)
+- [x] Top-selling products
+- [x] Low-stock alerts in the daily report
+- [ ] Instant alerts during the day (e.g. stock hits zero, no orders for hours)
 - [ ] Config-driven reports (define queries without code changes)
 - [ ] Additional channels (email, WhatsApp)
